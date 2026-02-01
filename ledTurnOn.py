@@ -1,18 +1,7 @@
 import cv2 as cv
-import numpy as np
-import mediapipe as mp      #TODO FIX MEDIA PIPE THIS SHIT NOT WORKING!!! 
-import serial   
+import mediapipe as mp
 import time
-
-
-# initilalize serial communication, adjust COM port and baud rate with board 
-# ser = serial.Serial(9600)
-time.sleep(2)   # wait for serial to initialize 
- 
-
-cap = cv.VideoCapture(0)
-
-# initializes hand solution
+import serial
 
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -20,47 +9,138 @@ HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
+#intializing serial communication 
+# ser = serial.Serial('/dev/cu.usbserial-210', 9600)  # Adjust the port name as needed
+time.sleep(2)   # wait for serial to initialize')
+
+# Global variable to store the latest result
+latest_result = None
+lastPrintTime = 0
+
+# Callback function for live stream mode
+def print_result(result: HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
+    global latest_result, lastPrintTime
+
+    currentTime = time.time() 
+
+    latest_result = result
+
+    if result.hand_landmarks and (currentTime - lastPrintTime) >= 1.0:
+        print(f'Detected {len(result.hand_landmarks)} hand(s) at timestamp: {timestamp_ms}ms')
+        lastPrintTime = currentTime
+
+# Configure the hand landmarker
+options = HandLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path='hand_landmarker.task'),
+    running_mode=VisionRunningMode.LIVE_STREAM,
+    num_hands=2,  # Detect up to 2 hands
+    min_hand_detection_confidence=0.5,
+    min_hand_presence_confidence=0.5,
+    min_tracking_confidence=0.5,
+    result_callback=print_result)
 
 
-while True:
-    success, frame = cap.read()         #reads camera/webcam
 
-    if not success:
-        break
+# Initialize webcam
+cap = cv.VideoCapture(0)
 
-    img = cv.flip(frame, 1)
-    width = int(cap.get(3))         #gets width for webcam
-    height = int(cap.get(4))        #gets height for webcam
-
-    rectangle_width = 100
-    rectangle_height = 100 
-
-    #red square in top left corner
-    cv.rectangle(img, (0, 0), (rectangle_width,rectangle_height), (0, 0, 255), -1)  
-    cv.putText(img, "RED", (0, 50), cv.FONT_HERSHEY_COMPLEX_SMALL, 2, (0,0,0), 2, cv.LINE_AA)
+# Create the hand landmarker
+with HandLandmarker.create_from_options(options) as landmarker:
+    frame_timestamp_ms = 0
     
-    #green square in top right corner
-    cv.rectangle(img, (width-rectangle_width, 0), (width, rectangle_height), (0, 255, 0), -1)
-    cv.putText(img, "GREEN", (width-rectangle_width, 50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.25, (0,0,0), 2, cv.LINE_AA)    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
+        
+        # Convert BGR to RGB (MediaPipe uses RGB)
+        rgb_frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        
+        # Convert to MediaPipe Image format
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        
+        # Send frame to landmarker asynchronously
+        landmarker.detect_async(mp_image, frame_timestamp_ms)
 
-    #blue square in bottom left corner
-    cv.rectangle(img, (0, height-rectangle_height), (rectangle_width, height), (255, 0, 0), -1)  
-    cv.putText(img, "BLUE", (0, height-50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.5, (0,0,0), 2, cv.LINE_AA) 
+        frame = cv.flip(frame, 1)
+        width = int(cap.get(3))         #gets width for webcam
+        height = int(cap.get(4))        #gets height for webcam
 
-    #white square in bottom right corner
-    cv.rectangle(img, (width-rectangle_width, height-rectangle_height), (width, height), (255, 255, 255), -1) 
-    cv.putText(img, "WHITE", (width-rectangle_width, height-50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.25, (0,0,0), 2, cv.LINE_AA)
+        rectangle_width = 100
+        rectangle_height = 100 
 
-    #processing hand landmarks
+        #red square in top left corner
+        cv.rectangle(frame, (0, 0), (rectangle_width,rectangle_height), (0, 0, 255), -1)  
+        cv.putText(frame, "RED", (0, 50), cv.FONT_HERSHEY_COMPLEX_SMALL, 2, (0,0,0), 2, cv.LINE_AA)
+        
+        #green square in top right corner
+        cv.rectangle(frame, (width-rectangle_width, 0), (width, rectangle_height), (0, 255, 0), -1)
+        cv.putText(frame, "GREEN", (width-rectangle_width, 50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.25, (0,0,0), 2, cv.LINE_AA)    
 
-    img_rgb = cv.cvtColor(img, cv.COLOR_BGR2RGB)    # Note: media pipes goes by blue green red, have ot covert to RGB
+        #blue square in bottom left corner
+        cv.rectangle(frame, (0, height-rectangle_height), (rectangle_width, height), (255, 0, 0), -1)  
+        cv.putText(frame, "BLUE", (0, height-50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.5, (0,0,0), 2, cv.LINE_AA) 
 
+        #white square in bottom right corner
+        cv.rectangle(frame, (width-rectangle_width, height-rectangle_height), (width, height), (255, 255, 255), -1) 
+        cv.putText(frame, "WHITE", (width-rectangle_width, height-50), cv.FONT_HERSHEY_COMPLEX_SMALL, 1.25, (0,0,0), 2, cv.LINE_AA)
+        
+        # Draw landmarks if available
+        if latest_result and latest_result.hand_landmarks:
+            for hand_landmarks in latest_result.hand_landmarks:
+                # Draw each landmark
+                for landmark in hand_landmarks:
+                    # Convert normalized coordinates to pixel coordinates
+                    x = int((1.0 - landmark.x)* frame.shape[1])
+                    y = int(landmark.y * frame.shape[0])
+                    points = cv.circle(frame, (x, y), 5, (0, 255, 0), -1)
 
-    cv.imshow('Output', img)
+                    red, green, blue = 0, 0, 0 
 
+                    if 0 <= x <= rectangle_width and 0 <= y <= rectangle_height: 
+                        red = 255
+                        rgb_message = f"{red},{green},{blue}"
+                        # ser.write(rgb_message.encode())
+                        print("RED Zone Detected")
 
-    if cv.waitKey(1) == ord('q'):
-        break
+                    elif (width - rectangle_width) <= x <= width and 0 <= y <= rectangle_height:
+                        green = 255
+                        rgb_message = f"{red},{green},{blue}"
+                        # ser.write(rgb_message.encode())
+                        print("GREEN Zone Detected")
 
+                    elif 0 <= x <= rectangle_width and (height - rectangle_height) <= y <= height:
+                        blue = 255
+                        rgb_message = f"{red},{green},{blue}"
+                        # ser.write(rgb_message.encode())
+                        print("BLUE Zone Detected")
+
+                    elif (width - rectangle_width) <= x <= width and (height - rectangle_height) <= y <= height:
+                        white = 255
+                        rgb_message = f"{red},{green},{blue}"
+                        # ser.write(rgb_message.encode())
+                        print("WHITE Zone Detected")
+
+                
+                
+                # You need to create a temporary image for drawing
+                annotated_frame = frame.copy()
+        
+        # Display FPS
+        cv.putText(frame, f'Hands detected: {len(latest_result.hand_landmarks) if latest_result and latest_result.hand_landmarks else 0}', 
+                    (10, 30), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # Show the frame
+        cv.imshow('Hand Tracking', frame)
+        
+        # Increment timestamp (in milliseconds)
+        frame_timestamp_ms += 33  # Approximately 30 fps
+        
+        # Break on 'q' key press
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+
+# Cleanup
 cap.release()
 cv.destroyAllWindows()
