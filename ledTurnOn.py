@@ -71,7 +71,7 @@ def zone_detection():
         print("BLUE Zone Detected")
 
     elif (width - rectangle_width) <= x <= width and (height - rectangle_height) <= y <= height:
-        white = 255
+        red, blue, green = 255, 255, 255
         rgb_message = f"{red},{green},{blue}"
         # ser.write(rgb_message.encode())
         print("WHITE Zone Detected")
